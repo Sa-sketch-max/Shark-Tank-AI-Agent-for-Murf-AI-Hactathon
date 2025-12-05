@@ -1,0 +1,13 @@
+{
+  "pitch_id": "TANK-001",
+  "company_valuation_usd": 1500000,
+  "annual_net_profit": 50000,
+  "money_requested_usd": 200000,
+  "equity_offered_percent": 15,
+  "ip_status_score": 9,
+  "founder_passion_score": 9,
+  "investor_decision": "Counter-Offer",
+  "reasoning_summary": "The valuation is aggressive (30x profit), but the Founder's proprietary technology (IP Score 9) and passion are too strong to ignore. We see massive potential upside if the team can execute the market strategy.",
+  "final_offer_details": "I will give you $200,000, but I demand 20% equity (a 5% increase from your ask) and mandatory monthly strategy meetings to hedge the valuation risk.",
+  "timestamp": "2025-12-05T15:15:30Z"
+}
