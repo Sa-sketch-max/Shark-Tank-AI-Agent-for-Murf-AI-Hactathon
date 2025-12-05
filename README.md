@@ -4,6 +4,8 @@
 
 **Submission for:** *Murf AI Voice Agent Hackathon — IIT Bombay Techfest*
 
+<img width="1860" height="902" alt="Image" src="https://github.com/user-attachments/assets/3f6deaed-632d-45f0-8829-08098c24c1e2" />
+
 ## 🎯 **Project Goal**
 
 To build a high-stakes, multi-tool **AI voice agent** that behaves like a demanding, interrogative venture capitalist.
