@@ -1,275 +1,218 @@
-# ======================================================
-# 🌿 DAILY WELLNESS VOICE COMPANION
-# 👨‍⚕️ Tutorial by Dr. Abhishek: https://www.youtube.com/@drabhishek.5460/videos
-# 💼 Professional Voice AI Development Course
-# 🚀 Context-Aware Agents & JSON Persistence
-# ======================================================
-
 import logging
 import json
-import os
-import asyncio
-from datetime import datetime
-from typing import Annotated, Literal, List, Optional
-from dataclasses import dataclass, field, asdict
-
-print("\n" + "🌿" * 50)
-print("🚀 WELLNESS COMPANION - TUTORIAL BY DR. ABHISHEK")
-print("📚 SUBSCRIBE: https://www.youtube.com/@drabhishek.5460/videos")
-print("💡 agent.py LOADED SUCCESSFULLY!")
-print("🌿" * 50 + "\n")
+from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import Field
 from livekit.agents import (
-    Agent,
-    AgentSession,
-    JobContext,
-    JobProcess,
-    RoomInputOptions,
-    WorkerOptions,
-    cli,
-    metrics,
-    MetricsCollectedEvent,
-    RunContext,
-    function_tool,
+    Agent, AgentSession, JobContext, JobProcess, MetricsCollectedEvent,
+    RoomInputOptions, WorkerOptions, cli, metrics, tokenize,
+    function_tool, RunContext
 )
-
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
-# ======================================================
-# 🧠 STATE MANAGEMENT & DATA STRUCTURES
-# ======================================================
+# --- GLOBAL DATA STRUCTURES ---
+PITCH_REPORTS = []
+# NEW: Set a moderate maximum valuation multiple for a safe investment
+MODERATE_MAX_VALUATION_MULTIPLIER = 10 
 
-@dataclass
-class CheckInState:
-    """🌿 Holds data for the CURRENT daily check-in"""
-    mood: str | None = None
-    energy: str | None = None
-    objectives: list[str] = field(default_factory=list)
-    advice_given: str | None = None
-    
-    def is_complete(self) -> bool:
-        """✅ Check if we have the core check-in data"""
-        return all([
-            self.mood is not None,
-            self.energy is not None,
-            len(self.objectives) > 0
-        ])
-    
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-@dataclass
-class Userdata:
-    """👤 User session data passed to the agent"""
-    current_checkin: CheckInState
-    history_summary: str  # String containing info about previous sessions
-    session_start: datetime = field(default_factory=datetime.now)
-
-# ======================================================
-# 💾 PERSISTENCE LAYERS (JSON LOGGING)
-# ======================================================
-WELLNESS_LOG_FILE = "wellness_log.json"
-
-def get_log_path():
-    base_dir = os.path.dirname(__file__)
-    backend_dir = os.path.abspath(os.path.join(base_dir, ".."))
-    return os.path.join(backend_dir, WELLNESS_LOG_FILE)
-
-def load_history() -> list:
-    """📖 Read previous check-ins from JSON"""
-    path = get_log_path()
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding='utf-8') as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
-    except Exception as e:
-        print(f"⚠️ Could not load history: {e}")
-        return []
-
-def save_checkin_entry(entry: CheckInState) -> None:
-    """💾 Append new check-in to the JSON list"""
-    path = get_log_path()
-    history = load_history()
-    
-    # Create record
-    record = {
-        "timestamp": datetime.now().isoformat(),
-        "mood": entry.mood,
-        "energy": entry.energy,
-        "objectives": entry.objectives,
-        "summary": entry.advice_given
-    }
-    
-    history.append(record)
-    
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding='utf-8') as f:
-        json.dump(history, f, indent=4, ensure_ascii=False)
-        
-    print(f"\n✅ CHECK-IN SAVED TO {path}")
-
-# ======================================================
-# 🛠️ WELLNESS AGENT TOOLS
-# ======================================================
-
-@function_tool
-async def record_mood_and_energy(
-    ctx: RunContext[Userdata],
-    mood: Annotated[str, Field(description="The user's emotional state (e.g., happy, stressed, anxious)")],
-    energy: Annotated[str, Field(description="The user's energy level (e.g., high, low, drained, energetic)")],
-) -> str:
-    """📝 Record how the user is feeling. Call this after the user describes their state."""
-    ctx.userdata.current_checkin.mood = mood
-    ctx.userdata.current_checkin.energy = energy
-    
-    print(f"📊 MOOD LOGGED: {mood} | ENERGY: {energy}")
-    
-    return f"I've noted that you are feeling {mood} with {energy} energy. I'm listening."
-
-@function_tool
-async def record_objectives(
-    ctx: RunContext[Userdata],
-    objectives: Annotated[list[str], Field(description="List of 1-3 specific goals the user wants to achieve today")],
-) -> str:
-    """🎯 Record the user's daily goals. Call this when user states what they want to do."""
-    ctx.userdata.current_checkin.objectives = objectives
-    print(f"🎯 OBJECTIVES LOGGED: {objectives}")
-    return "I've written down your goals for the day."
-
-@function_tool
-async def complete_checkin(
-    ctx: RunContext[Userdata],
-    final_advice_summary: Annotated[str, Field(description="A brief 1-sentence summary of the advice given")],
-) -> str:
-    """💾 Finalize the session, provide a recap, and save to JSON. Call at the very end."""
-    state = ctx.userdata.current_checkin
-    state.advice_given = final_advice_summary
-    
-    if not state.is_complete():
-        return "I can't finish yet. I still need to know your mood, energy, or at least one goal."
-
-    # Save to JSON
-    save_checkin_entry(state)
-    
-    print("\n" + "⭐" * 60)
-    print("🎉 WELLNESS CHECK-IN COMPLETED!")
-    print(f"💭 Mood: {state.mood}")
-    print(f"🎯 Goals: {state.objectives}")
-    print("⭐" * 60 + "\n")
-
-    recap = f"""
-    Here is your recap for today:
-    You are feeling {state.mood} and your energy is {state.energy}.
-    Your main goals are: {', '.join(state.objectives)}.
-    
-    Remember: {final_advice_summary}
-    
-    I've saved this in your wellness log. Have a wonderful day!
-    """
-    return recap
-
-# ======================================================
-# 🧠 AGENT DEFINITION
-# ======================================================
-
-class WellnessAgent(Agent):
-    def __init__(self, history_context: str):
+class Investor(Agent):
+    def __init__(self) -> None:
         super().__init__(
-            instructions=f"""
-            You are a compassionate, supportive Daily Wellness Companion.
+            instructions="""You are the **Opportunistic Investor** agent, also known as **The Deal Closer**. You are sharp, demanding, and always look for the next disruptive opportunity.
             
-            🧠 **CONTEXT FROM PREVIOUS SESSIONS:**
-            {history_context}
+            **INVESTMENT PHILOSOPHY (FLEXIBLE):**
+            * You are easily tempted by **high founder passion** and strong **intellectual property (IP)**, tolerating a higher valuation if the upside is massive.
+            * You invest if the numbers are conservative OR if the qualitative factors (IP and Passion) are compelling enough to justify the risk.
+            * Your conversational tone is demanding and analytical, but you are ready to pivot to a deal if the founder makes a compelling case. You will use counter-questions to gauge market appetite and founder conviction.
             
-            🎯 **GOALS FOR THIS SESSION:**
-            1. **Check-in:** Ask how they are feeling (Mood) and their energy levels.
-               - *Reference the history context if available (e.g., "Last time you were tired, how is today?").*
-            2. **Intentions:** Ask for 1-3 simple objectives for the day.
-            3. **Support:** Offer small, grounded, NON-MEDICAL advice.
-               - Example: "Try a 5-minute walk" or "Break that big task into small steps."
-            4. **Recap & Save:** Summarize their mood and goals, then call 'complete_checkin'.
-
-            🚫 **SAFETY GUARDRAILS:**
-            - You are NOT a doctor or therapist.
-            - Do NOT diagnose conditions or prescribe treatments.
-            - If a user mentions self-harm or severe crisis, gently suggest professional help immediately.
-
-            🛠️ **Use the tools to record data as the user speaks.**
+            **Conversational and Tool Workflow (CRITICAL CHAINING):**
+            1. **Opening:** Introduce yourself and demand the pitch and the ask.
+            2. **Phase 1 (Financials):** Grill them on profit, valuation, and use of funds.
+            3. **Phase 2 (Market):** Challenge their competitive advantage and proof of concept.
+            4. **Phase 3 (Team):** Assess the founder's competence and passion.
+            5. **Verdict:** Deliver a decision (often a Counter-Offer) and file the report.
+            
+            Keep your spoken responses concise and focused on financial and market proof. Do not use any complex formatting or punctuation.
             """,
-            tools=[
-                record_mood_and_energy,
-                record_objectives,
-                complete_checkin,
-            ],
         )
 
-# ======================================================
-# 🎬 ENTRYPOINT & INITIALIZATION
-# ======================================================
+    # --- TOOL 1: Gather Financial Metrics (Tool 1 Logic remains the same, focuses on data extraction) ---
+    @function_tool
+    async def gather_financial_metrics(self, context: RunContext, company_name: str, valuation_usd: int, requested_money_usd: int, equity_offered_percent: int, annual_net_profit: int) -> str:
+        """
+        Extracts the core financial metrics, focusing on the valuation vs. profit reality.
+        
+        Args:
+            company_name: The name of the startup.
+            valuation_usd: The company's valuation as stated by the user.
+            requested_money_usd: The amount of money the user is asking for.
+            equity_offered_percent: The percentage of the company being offered.
+            annual_net_profit: The last 12 months' net profit.
+        """
+        logger.info(f"Financials gathered for {company_name}")
+        valuation_to_profit_ratio = valuation_usd / max(annual_net_profit, 1)
+        
+        if valuation_to_profit_ratio > 15: # Less strict than before
+            return f"The numbers are aggressive. Your valuation is {valuation_to_profit_ratio:.1f} times your profit. Justify this incredible valuation with your market strategy."
+        
+        return "Financials recorded. Your numbers are responsible. Proceed to market defense."
 
+    # --- TOOL 2: Assess Product and Market (Tempted by IP) ---
+    @function_tool
+    async def assess_product_and_market(self, context: RunContext, proprietary_technology: Literal["Yes", "No", "Patent Pending"], customer_acquisition_strategy: str, competitive_advantage: str) -> str:
+        """
+        Assesses the defensibility and scalability of the product, challenging competitive advantage.
+        
+        Args:
+            proprietary_technology: Status of IP (Yes/No/Patent Pending).
+            customer_acquisition_strategy: How the company will acquire customers and scale.
+            competitive_advantage: What makes the product unique or better than rivals.
+        """
+        logger.info(f"Market strategy assessed. IP Status: {proprietary_technology}")
+        ip_status_score = 10 if proprietary_technology in ["Patent Pending", "Yes"] else 3
+        
+        if ip_status_score < 7:
+            return f"Your product lacks defensibility. Convince me why a competitor won't crush you tomorrow. We need to talk about founder commitment."
+            
+        return "Market defense analyzed. The IP is tempting. Proceed to founder assessment."
+
+    # --- TOOL 3: Judge Pitch and Team Fit (Tempted by Passion) ---
+    @function_tool
+    async def judge_pitch_and_team_fit(self, context: RunContext, founder_background: str, origin_story_impact: Literal["High", "Medium", "Low"], founder_passion_score: int) -> str:
+        """
+        Assesses the founder's background, focusing on relevant experience and competence, not emotion.
+        
+        Args:
+            founder_background: Relevant experience and education of the founder.
+            origin_story_impact: The emotional connection or relevance of the idea's origin.
+            founder_passion_score: A subjective score (1-10) reflecting the founder's commitment and clarity.
+        """
+        logger.info(f"Founder pitch judged. Passion Score: {founder_passion_score}")
+        
+        if founder_passion_score >= 9:
+            return "Founder assessment complete. Your conviction is palpable. That's a good sign. We are ready for the verdict."
+            
+        return "Founder assessment complete. Your passion is unconvincing. We are ready for the verdict."
+
+    # --- TOOL 4: Render Final Decision and Generate JSON Report (FLEXIBLE LOGIC) ---
+    @function_tool
+    async def render_final_decision_json(self, context: RunContext, valuation: int, profit: int, ip_score: int, passion_score: int, equity_offered: int) -> str:
+        """
+        Synthesizes all four evaluation phases to determine the final investment decision (Invest/Pass/Counter-Offer) and renders the structured JSON report.
+        
+        Args:
+            valuation: The company's valuation (integer).
+            profit: The last 12 months' net profit (integer).
+            ip_score: The proprietary technology score from Tool 2 (integer).
+            passion_score: The founder's passion score from Tool 3 (integer).
+            equity_offered: The percentage of equity offered (integer).
+        """
+        # --- CRITICAL FIX & TYPE CASTING ---
+        try:
+            valuation = int(valuation); profit = int(profit); ip_score = int(ip_score); passion_score = int(passion_score); equity_offered = int(equity_offered)
+        except (ValueError, TypeError):
+            logger.error("Non-numeric value passed to final decision tool. Cannot calculate.")
+            return "Internal Error: I cannot calculate the decision due to non-numeric pitch values. Re-pitch with clear numbers."
+
+        if profit <= 0: profit = 1 
+        valuation_ratio = valuation / profit 
+        decision = "Pass"
+        reasoning = "Unacceptable risk profile."
+        final_offer = "N/A"
+        
+        # --- Investment Decision Model (OPPORTUNISTIC LOGIC) ---
+        
+        # CONDITION 1: INVEST (Conservative numbers AND strong defensibility)
+        if valuation_ratio <= MODERATE_MAX_VALUATION_MULTIPLIER and ip_score >= 8:
+            decision = "Invest"
+            reasoning = "The numbers are safe, and the IP is strong. This is a secure deal."
+            final_offer = f"I accept your current ask: your requested money for {equity_offered}% equity."
+
+        # CONDITION 2: COUNTER-OFFER (Tempting Risk: High Passion OR High IP, but risky numbers)
+        elif valuation_ratio <= 20 or (ip_score >= 9 or passion_score >= 9):
+            decision = "Counter-Offer"
+            reasoning = "Your valuation is high, but your IP and passion are too tempting to ignore. We need a safety net."
+            counter_equity = equity_offered + 5 # Ask for 5% more equity to hedge the risk
+            final_offer = f"I will give you the requested money, but I demand **{counter_equity}%** equity and mandatory monthly strategy meetings."
+
+        # CONDITION 3: PASS (Default - Only if valuation is insane AND IP/Passion are low)
+        else:
+            decision = "Pass"
+            reasoning = "The risk is too high. Your valuation is insane, and you have failed to convince me of your competitive moat or passion."
+
+
+        pitch_id = f"TANK-{len(PITCH_REPORTS) + 1}"
+        report_data = {
+            "pitch_id": pitch_id,
+            "company_valuation_usd": valuation,
+            "annual_net_profit": profit,
+            "equity_offered_percent": equity_offered,
+            "ip_status_score": ip_score,
+            "founder_passion_score": passion_score,
+            "investor_decision": decision,
+            "reasoning_summary": reasoning,
+            "final_offer_details": final_offer,
+            "timestamp": context.timestamp.isoformat()
+        }
+        PITCH_REPORTS.append(report_data)
+        logger.info(f"Shark Tank Verdict JSON Generated: {json.dumps(report_data)}")
+
+        return f"My decision is: {decision}. {reasoning}. The final Investment Decision Report has been filed."
+
+
+# --- The rest of the file remains unchanged ---
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
 async def entrypoint(ctx: JobContext):
-    ctx.log_context_fields = {"room": ctx.room.name}
-
-    print("\n" + "🌿" * 25)
-    print("🚀 STARTING WELLNESS SESSION")
-    print("👨‍⚕️ Tutorial by Dr. Abhishek")
+    ctx.log_context_fields = {"room": ctx.room.name,}
     
-    # 1. Load History from JSON
-    history = load_history()
-    history_summary = "No previous history found. This is the first session."
-    
-    if history:
-        last_entry = history[-1]
-        history_summary = (
-            f"Last check-in was on {last_entry.get('timestamp', 'unknown date')}. "
-            f"User felt {last_entry.get('mood')} with {last_entry.get('energy')} energy. "
-            f"Their goals were: {', '.join(last_entry.get('objectives', []))}."
-        )
-        print("📜 HISTORY LOADED:", history_summary)
-    else:
-        print("📜 NO HISTORY FOUND.")
-
-    # 2. Initialize Session Data
-    userdata = Userdata(
-        current_checkin=CheckInState(),
-        history_summary=history_summary
-    )
-
-    # 3. Setup Agent
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
         llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-            voice="en-US-natalie", # Using a softer, more caring voice
-            style="Promo",         # Often sounds more enthusiastic/supportive
-            text_pacing=True,
+            voice="en-US-matthew", 
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True
         ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        userdata=userdata,
+        preemptive_generation=True,
     )
-    
-    # 4. Start
+
+    usage_collector = metrics.UsageCollector()
+    @session.on("metrics_collected")
+    def _on_metrics_collected(ev: MetricsCollectedEvent):
+        metrics.log_metrics(ev.metrics)
+        usage_collector.collect(ev.metrics)
+
+    async def log_usage():
+        summary = usage_collector.get_summary()
+        logger.info(f"Usage: {summary}")
+        logger.info(f"Total Pitch Reports: {len(PITCH_REPORTS)}")
+
+    ctx.add_shutdown_callback(log_usage)
+
     await session.start(
-        agent=WellnessAgent(history_context=history_summary),
+        agent=Investor(),
         room=ctx.room,
         room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC()
+            noise_cancellation=noise_cancellation.BVC(),
         ),
     )
-
     await ctx.connect()
 
+
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint, 
+            prewarm_fnc=prewarm,
+            initialize_process_timeout=180.0
+        )
+    )
